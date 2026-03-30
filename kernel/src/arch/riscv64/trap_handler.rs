@@ -381,15 +381,24 @@ fn handle_recursive_fault(frame: &TrapFrame, epc: VirtualAddress) -> ! {
     };
     regs.gp[2] = sscratch::read();
 
-    let backtrace = Backtrace::<32>::from_registers(regs.clone(), epc.add(1)).unwrap();
-    tracing::error!("{backtrace}");
+    match Backtrace::<32>::from_registers(regs.clone(), epc.add(1)) {
+        Ok(backtrace) => {
+            tracing::error!("{backtrace}");
 
-    // FIXME it would be great to get rid of the allocation here :/
-    let payload = Box::new("recursive fault in trap handler");
+            // FIXME it would be great to get rid of the allocation here :/
+            let payload = Box::new("recursive fault in trap handler");
 
-    // begin a panic on the original stack
-    // Safety: we saved the register state at the beginning of the trap handler
-    unsafe {
-        kpanic_unwind::begin_unwind(payload, regs, epc.add(1).get());
+            // begin a panic on the original stack
+            // Safety: we saved the register state at the beginning of the trap handler
+            unsafe {
+                kpanic_unwind::begin_unwind(payload, regs, epc.add(1).get());
+            }
+        }
+        Err(_) => {
+            // No unwind info available (e.g. faulted in JIT code), we cannot
+            // produce a backtrace or unwind from here, just abort.
+            tracing::error!("recursive fault at {epc} (no unwind info available)");
+            kabort::abort();
+        }
     }
 }
